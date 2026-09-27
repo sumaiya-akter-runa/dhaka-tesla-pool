@@ -1,0 +1,125 @@
+// Dhaka Tesla Pool — Prisma schema
+// Mirrors the ERD in docs/architecture guide: users, vehicles, ride_requests,
+// pools, pool_memberships, ride_status_history.
+
+generator client {
+  provider      = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PASSENGER
+  DRIVER
+}
+
+enum VehicleStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum RideStatus {
+  REQUESTED
+  MATCHED
+  DRIVER_ARRIVED
+  STARTED
+  COMPLETED
+  CANCELLED
+}
+
+enum PoolStatus {
+  OPEN // still accepting passengers up to capacity
+  FULL // at capacity, no more joins
+  CLOSED // ride finished or cancelled
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  vehicles     Vehicle[]
+  rideRequests RideRequest[]
+  statusChanges RideStatusHistory[] @relation("ChangedBy")
+
+  @@map("users")
+}
+
+model Vehicle {
+  id       String        @id @default(uuid())
+  driverId String        @map("driver_id")
+  driver   User          @relation(fields: [driverId], references: [id])
+  name     String
+  capacity Int
+  status   VehicleStatus @default(OFFLINE)
+
+  pools Pool[]
+
+  @@map("vehicles")
+}
+
+model Pool {
+  id        String     @id @default(uuid())
+  vehicleId String     @map("vehicle_id")
+  vehicle   Vehicle    @relation(fields: [vehicleId], references: [id])
+  status    PoolStatus @default(OPEN)
+  // pickup/destination zones the pool was opened for — used by the matching rule
+  pickupZone      String   @map("pickup_zone")
+  destinationZone String   @map("destination_zone")
+  occupiedSeats   Int      @default(0) @map("occupied_seats")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  memberships PoolMembership[]
+
+  @@index([vehicleId])
+  @@index([pickupZone, status])
+  @@map("pools")
+}
+
+model RideRequest {
+  id              String     @id @default(uuid())
+  passengerId     String     @map("passenger_id")
+  passenger       User       @relation(fields: [passengerId], references: [id])
+  pickupZone      String     @map("pickup_zone")
+  destinationZone String     @map("destination_zone")
+  seatsRequested  Int        @default(1) @map("seats_requested")
+  status          RideStatus @default(REQUESTED)
+  farePaisa       Int?       @map("fare_paisa")
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  membership    PoolMembership?
+  statusHistory RideStatusHistory[]
+
+  @@index([passengerId])
+  @@index([pickupZone, status])
+  @@map("ride_requests")
+}
+
+model PoolMembership {
+  id            String   @id @default(uuid())
+  poolId        String   @map("pool_id")
+  pool          Pool     @relation(fields: [poolId], references: [id])
+  rideRequestId String   @unique @map("ride_request_id")
+  rideRequest   RideRequest @relation(fields: [rideRequestId], references: [id])
+  seats         Int
+  joinedAt      DateTime @default(now()) @map("joined_at")
+
+  @@map("pool_memberships")
+}
+
+model RideStatusHistory {
+  id            String     @id @default(uuid())
+  rideRequestId String     @map("ride_request_id")
+  rideRequest   RideRequest @relation(fields: [rideRequestId], references: [id])
+  status        RideStatus
+  changedAt     DateTime   @default(now()) @map("changed_at")
+  changedBy     String     @map("changed_by")
+  changedByUser User       @relation("ChangedBy", fields: [changedBy], references: [id])
+
+  @@map("ride_status_history")
+}
